@@ -1,6 +1,7 @@
 import { alarmApp } from "./apps/alarm/app.js";
+import { civApp } from "./apps/civ/app.js";
 
-const APPS = [alarmApp];
+const APPS = [alarmApp, civApp];
 
 const root = document.getElementById("app");
 let cleanup = null;
