@@ -15,6 +15,8 @@ const UNITS = {
   warrior: { name: "Воин", letter: "В", atk: 2, def: 2, moves: 1, cost: 20, tech: null },
   archer: { name: "Лучник", letter: "Л", atk: 3, def: 4, moves: 1, cost: 35, tech: "archery" },
   swordsman: { name: "Мечник", letter: "М", atk: 5, def: 4, moves: 1, cost: 45, tech: "iron" },
+  galley: { name: "Галера", letter: "Г", atk: 3, def: 2, moves: 3, cost: 35, tech: "sailing", naval: true },
+  caravel: { name: "Каравелла", letter: "К", atk: 5, def: 3, moves: 4, cost: 55, tech: "astronomy", naval: true },
 };
 
 const BUILDINGS = {
@@ -33,7 +35,9 @@ const TECHS = {
   bronze: { name: "Обработка бронзы", cost: 44, req: ["pottery"] },
   wheel: { name: "Колесо", cost: 44, req: ["pottery"] },
   iron: { name: "Обработка железа", cost: 60, req: ["bronze"] },
+  sailing: { name: "Парусное дело", cost: 32, req: ["pottery"] },
   mathematics: { name: "Математика", cost: 60, req: ["writing"] },
+  astronomy: { name: "Астрономия", cost: 80, req: ["mathematics"] },
   construction: { name: "Строительство", cost: 70, req: ["masonry", "wheel"] },
   currency: { name: "Деньги", cost: 70, req: ["mathematics"] },
   literature: { name: "Литература", cost: 80, req: ["writing", "currency"] },
@@ -70,6 +74,20 @@ function unitsAt(x, y) { return S.units.filter((u) => u.x === x && u.y === y); }
 function cityAt(x, y) { return S.cities.find((c) => c.x === x && c.y === y) || null; }
 function cityById(id) { return S.cities.find((c) => c.id === id) || null; }
 function unitById(id) { return S.units.find((u) => u.id === id) || null; }
+
+function isNaval(u) { return !!UNITS[u.type].naval; }
+
+function canEnter(u, x, y) {
+  const t = S.map[key(x, y)];
+  if (isNaval(u)) return t === TILE.OCEAN;
+  return t !== TILE.MOUNTAIN;
+}
+
+function adjWater(x, y) {
+  return neighbors(x, y).find(([nx, ny]) => S.map[key(nx, ny)] === TILE.OCEAN) || null;
+}
+
+function isCoastal(x, y) { return adjWater(x, y) !== null; }
 
 function makeNoise(gw, gh) {
   const g = new Float32Array((gw + 1) * (gh + 1));
@@ -131,42 +149,106 @@ function largestLandComponent(map) {
   return new Set(best);
 }
 
+function scatterResources(map) {
+  const res = new Array(W * H).fill(null);
+  for (let i = 0; i < W * H; i++) {
+    if (map[i] !== TILE.OCEAN) continue;
+    const x = i % W, y = (i / W) | 0;
+    const nearLand = neighbors(x, y).some(([nx, ny]) => map[key(nx, ny)] !== TILE.OCEAN);
+    if (!nearLand) continue;
+    const r = Math.random();
+    if (r < 0.10) res[i] = "fish";
+    else if (r < 0.13) res[i] = "whale";
+  }
+  return res;
+}
+
+function carveChannel(map) {
+  const comp = largestLandComponent(map);
+  if (comp.size < 90) return false;
+  let minX = W, minY = H, maxX = 0, maxY = 0;
+  for (const i of comp) {
+    const x = i % W, y = (i / W) | 0;
+    if (x < minX) minX = x;
+    if (y < minY) minY = y;
+    if (x > maxX) maxX = x;
+    if (y > maxY) maxY = y;
+  }
+  const cx = Math.floor((minX + maxX) / 2);
+  let offset = 0;
+  for (let y = minY; y <= maxY; y++) {
+    offset = Math.max(-2, Math.min(2, offset + (Math.random() < 0.5 ? 1 : -1)));
+    for (let w = 0; w < 2; w++) {
+      const x = cx + offset + w;
+      if (inMap(x, y)) map[key(x, y)] = TILE.OCEAN;
+    }
+  }
+  return true;
+}
+
 function generateMap() {
-  for (let attempt = 0; attempt < 8; attempt++) {
-    const coarse = makeNoise(6, 4);
+  let lastMap = null;
+  for (let attempt = 0; attempt < 12; attempt++) {
+    const coarse = makeNoise(7, 5);
     const fine = makeNoise(13, 9);
     const elev = new Float32Array(W * H);
     for (let y = 0; y < H; y++)
       for (let x = 0; x < W; x++) {
-        let e = coarse((x / W) * 5, (y / H) * 3) + 0.45 * fine((x / W) * 12, (y / H) * 8);
+        let e = coarse((x / W) * 6, (y / H) * 4) + 0.45 * fine((x / W) * 12, (y / H) * 8);
         const d = Math.min(x, y, W - 1 - x, H - 1 - y);
-        if (d < 3) e -= (3 - d) * 0.28;
+        if (d < 2) e -= (2 - d) * 0.25;
         elev[key(x, y)] = e;
       }
     const sorted = Float32Array.from(elev).sort();
-    const thr = sorted[Math.floor(W * H * 0.52)];
+    const thr = sorted[Math.floor(W * H * 0.47)];
     const map = new Array(W * H);
     for (let i = 0; i < W * H; i++) map[i] = elev[i] > thr ? TILE.GRASS : TILE.OCEAN;
     cleanupBodies(map);
+    lastMap = map;
+    const comps = floodComponents(map, isLandTile)
+      .filter((c) => c.cells.length >= 25)
+      .sort((a, b) => b.cells.length - a.cells.length);
+    if (comps.length < 2 || comps[0].cells.length < 45 || comps[1].cells.length < 25) continue;
+    const keep = new Set();
+    comps.forEach((c) => c.cells.forEach((i) => keep.add(i)));
+    for (let i = 0; i < W * H; i++)
+      if (map[i] !== TILE.OCEAN && !keep.has(i)) map[i] = TILE.OCEAN;
+    const res = scatterResources(map);
+    sprinkleTerrain(map);
+    return { map, res };
+  }
+  const map = lastMap || new Array(W * H).fill(TILE.GRASS);
+  carveChannel(map);
+  cleanupBodies(map);
+  const comps = floodComponents(map, isLandTile)
+    .filter((c) => c.cells.length >= 25)
+    .sort((a, b) => b.cells.length - a.cells.length);
+  if (comps.length >= 2) {
+    const keep = new Set();
+    comps.slice(0, 2).forEach((c) => c.cells.forEach((i) => keep.add(i)));
+    for (let i = 0; i < W * H; i++)
+      if (map[i] !== TILE.OCEAN && !keep.has(i)) map[i] = TILE.OCEAN;
+  } else {
     const comp = largestLandComponent(map);
-    if (comp.size < 90) continue;
     for (let i = 0; i < W * H; i++)
       if (map[i] !== TILE.OCEAN && !comp.has(i)) map[i] = TILE.OCEAN;
-    for (let i = 0; i < W * H; i++) {
-      if (map[i] !== TILE.GRASS) continue;
-      const r = Math.random();
-      if (r < 0.2) map[i] = TILE.PLAINS;
-    }
-    for (let i = 0; i < W * H; i++) {
-      if (map[i] !== TILE.GRASS && map[i] !== TILE.PLAINS) continue;
-      const r = Math.random();
-      if (r < 0.20) map[i] = TILE.FOREST;
-      else if (r < 0.33) map[i] = TILE.HILLS;
-      else if (r < 0.37) map[i] = TILE.MOUNTAIN;
-    }
-    return map;
   }
-  return new Array(W * H).fill(TILE.GRASS);
+  sprinkleTerrain(map);
+  return { map, res: scatterResources(map) };
+}
+
+function sprinkleTerrain(map) {
+  for (let i = 0; i < W * H; i++) {
+    if (map[i] !== TILE.GRASS) continue;
+    if (Math.random() < 0.2) map[i] = TILE.PLAINS;
+  }
+  for (let i = 0; i < W * H; i++) {
+    if (map[i] !== TILE.GRASS && map[i] !== TILE.PLAINS) continue;
+    const r = Math.random();
+    if (r < 0.20) map[i] = TILE.FOREST;
+    else if (r < 0.33) map[i] = TILE.HILLS;
+    else if (r < 0.37) map[i] = TILE.MOUNTAIN;
+  }
 }
 
 function landScore(x, y) {
@@ -178,19 +260,39 @@ function landScore(x, y) {
   return sc;
 }
 
+function computeWaterComps(map) {
+  const ids = new Array(W * H).fill(-1);
+  let id = 0;
+  for (const c of floodComponents(map, isWaterTile)) {
+    c.cells.forEach((i) => { ids[i] = id; });
+    id++;
+  }
+  return ids;
+}
+
 function findStarts() {
-  const comp = largestLandComponent(S.map);
-  const spots = [...comp].filter((i) => landScore(i % W, (i / W) | 0) >= 8);
-  const pool = spots.length >= 2 ? spots : [...comp];
-  let bestPair = null, bestD = -1;
-  for (let i = 0; i < pool.length; i++)
-    for (let j = i + 1; j < pool.length; j++) {
-      const ax = pool[i] % W, ay = (pool[i] / W) | 0;
-      const bx = pool[j] % W, by = (pool[j] / W) | 0;
-      const d = dist(ax, ay, bx, by);
-      if (d > bestD) { bestD = d; bestPair = [[ax, ay], [bx, by]]; }
+  const comps = floodComponents(S.map, isLandTile).sort((a, b) => b.cells.length - a.cells.length);
+  const pickBest = (comp) => {
+    let best = null, bs = -1;
+    for (const i of comp.cells) {
+      const s = landScore(i % W, (i / W) | 0);
+      if (s > bs) { bs = s; best = i; }
     }
-  return bestPair || [[3, 3], [W - 4, H - 4]];
+    return best;
+  };
+  const a = pickBest(comps[0]);
+  let b = comps[1] ? pickBest(comps[1]) : null;
+  if (b === null) {
+    const pool = [...comps[0].cells];
+    let bestD = -1;
+    for (let i = 0; i < pool.length; i++)
+      for (let j = i + 1; j < pool.length; j++) {
+        const d = dist(pool[i] % W, (pool[i] / W) | 0, pool[j] % W, (pool[j] / W) | 0);
+        if (d > bestD) { bestD = d; b = pool[j]; }
+      }
+  }
+  if (a === null || b === null) return [[3, 3], [W - 4, H - 4]];
+  return [[a % W, (a / W) | 0], [b % W, (b / W) | 0]];
 }
 
 function newGame() {
@@ -198,6 +300,8 @@ function newGame() {
     turn: 1,
     nextId: 1,
     map: null,
+    res: null,
+    waterComp: null,
     players: [
       { name: "Рим", color: "#4a90d9", techs: [], researching: null, progress: 0 },
       { name: "Галлы", color: "#d9534f", techs: [], researching: null, progress: 0 },
@@ -209,7 +313,10 @@ function newGame() {
     over: null,
     sel: null,
   };
-  S.map = generateMap();
+  const g = generateMap();
+  S.map = g.map;
+  S.res = g.res;
+  S.waterComp = computeWaterComps(S.map);
   const [a, b] = findStarts();
   spawn("settler", 0, a[0], a[1]);
   spawn("warrior", 0, a[0], a[1]);
@@ -258,8 +365,7 @@ function reachable(u) {
     for (const [nx, ny] of neighbors(x, y)) {
       const k = key(nx, ny);
       if (seen.has(k)) continue;
-      const t = S.map[k];
-      if (!TERRAIN[t].passable) continue;
+      if (!canEnter(u, nx, ny)) continue;
       const enemyHere = unitsAt(nx, ny).some((o) => o.owner !== u.owner) ||
         (cityAt(nx, ny) && cityAt(nx, ny).owner !== u.owner);
       if (enemyHere) { res.set(k, 0); continue; }
@@ -298,10 +404,12 @@ function attack(att, x, y) {
   const city = cityAt(x, y);
   const def = defs[0];
   if (!def) return;
+  if (isNaval(att) && S.map[key(x, y)] !== TILE.OCEAN) return;
   const A = UNITS[att.type].atk;
   let D = UNITS[def.type].def;
   const t = S.map[key(x, y)];
   D *= 1 + TERRAIN[t].def / 100;
+  if (!isNaval(def) && t === TILE.OCEAN) D *= 0.5;
   if (city) {
     D *= 1.25;
     if (city.buildings.includes("walls")) D *= 1.5;
@@ -353,6 +461,24 @@ function foundCity(u) {
   computeVision();
 }
 
+function waterAdjKeys(x, y) {
+  return neighbors(x, y)
+    .filter(([nx, ny]) => S.map[key(nx, ny)] === TILE.OCEAN)
+    .map(([nx, ny]) => key(nx, ny));
+}
+
+function tradeActive(c) {
+  const p = S.players[c.owner];
+  if (!p.techs.includes("sailing")) return false;
+  const a = waterAdjKeys(c.x, c.y);
+  if (!a.length) return false;
+  const ids = new Set(a.map((k) => S.waterComp[k]));
+  return S.cities.some((o) =>
+    o.owner === c.owner && o.id !== c.id &&
+    waterAdjKeys(o.x, o.y).some((k) => ids.has(S.waterComp[k]))
+  );
+}
+
 function cityYields(c) {
   let food = 2, prod = 1;
   const cand = [];
@@ -363,7 +489,11 @@ function cityYields(c) {
       if (!inMap(nx, ny)) continue;
       if (cityAt(nx, ny)) continue;
       const t = TERRAIN[S.map[key(nx, ny)]];
-      cand.push([t.food, t.prod, t.food * 1.2 + t.prod]);
+      let f = t.food, p = t.prod;
+      const r = S.res ? S.res[key(nx, ny)] : null;
+      if (r === "fish") f += 2;
+      if (r === "whale") { f += 1; p += 1; }
+      cand.push([f, p, f * 1.2 + p]);
     }
   cand.sort((a, b) => b[2] - a[2]);
   for (let i = 0; i < Math.min(c.pop, cand.length); i++) {
@@ -374,7 +504,8 @@ function cityYields(c) {
   if (c.buildings.includes("forge")) prod += 2;
   let sci = 2 + Math.floor(c.pop / 2);
   if (c.buildings.includes("library")) sci = Math.round(sci * 1.5);
-  return { food, prod, sci };
+  if (tradeActive(c)) { prod += 2; sci += 1; }
+  return { food, prod, sci, trade: tradeActive(c) };
 }
 
 function techAvailable(p, id) {
@@ -400,8 +531,19 @@ function processEconomy() {
       if (c.prodStored >= def.cost) {
         c.prodStored -= def.cost;
         if (c.producing.k === "unit") {
-          spawn(c.producing.id, c.owner, c.x, c.y);
-          if (c.owner === 0) addLog(`${c.name}: построен ${def.name}`);
+          const spec = UNITS[c.producing.id];
+          if (spec.naval) {
+            const w = adjWater(c.x, c.y);
+            if (w) {
+              spawn(c.producing.id, c.owner, w[0], w[1]);
+              if (c.owner === 0) addLog(`${c.name}: построена ${spec.name}`);
+            } else {
+              c.prodStored = 0;
+            }
+          } else {
+            spawn(c.producing.id, c.owner, c.x, c.y);
+            if (c.owner === 0) addLog(`${c.name}: построен ${spec.name}`);
+          }
         } else {
           c.buildings.push(c.producing.id);
           if (c.owner === 0) addLog(`${c.name}: построена ${def.name}`);
@@ -481,6 +623,13 @@ function aiTurn() {
       const home = S.cities.filter((c) => c.owner === 1)[0];
       if (home && dist(u.x, u.y, home.x, home.y) > 3) target = [home.x, home.y];
     }
+    if (!target && S.turn > 15) {
+      let bd = Infinity;
+      for (const c of S.cities.filter((x) => x.owner === 0)) {
+        const d = dist(u.x, u.y, c.x, c.y);
+        if (d < bd) { bd = d; target = [c.x, c.y]; }
+      }
+    }
     if (target) {
       while (u.moves > 0) {
         const adj = dist(u.x, u.y, target[0], target[1]) === 1;
@@ -503,8 +652,7 @@ function aiTurn() {
 
 function stepToward(u, tx, ty) {
   const opts = neighbors(u.x, u.y).filter(([nx, ny]) => {
-    const t = S.map[key(nx, ny)];
-    if (!TERRAIN[t].passable) return false;
+    if (!canEnter(u, nx, ny)) return false;
     if (unitsAt(nx, ny).some((o) => o.owner !== u.owner)) return false;
     const c = cityAt(nx, ny);
     if (c && c.owner !== u.owner) return false;
@@ -549,6 +697,8 @@ function load() {
     const raw = localStorage.getItem(SAVE_KEY);
     if (!raw) return false;
     S = JSON.parse(raw);
+    if (!S.res) S.res = new Array(W * H).fill(null);
+    if (!S.waterComp) S.waterComp = computeWaterComps(S.map);
     return !!S && !!S.map;
   } catch { return false; }
 }
@@ -570,6 +720,7 @@ function drawMap() {
       if (t === TILE.FOREST) drawGlyph("🌲", x, y);
       if (t === TILE.MOUNTAIN) drawGlyph("⛰", x, y);
       if (t === TILE.HILLS) drawGlyph("⌃", x, y, 12);
+      if (t === TILE.OCEAN && S.res[k]) drawGlyph(S.res[k] === "fish" ? "🐟" : "🐋", x, y);
       if (!visible[k]) {
         ctx.fillStyle = "rgba(0,0,0,0.45)";
         ctx.fillRect(x * TS, y * TS, TS - 1, TS - 1);
@@ -594,7 +745,9 @@ function drawMap() {
     ctx.arc(cx, cy, 11, 0, Math.PI * 2);
     ctx.fillStyle = S.players[u.owner].color;
     ctx.fill();
-    ctx.strokeStyle = u.moves > 0 && u.owner === 0 ? "#ffe14d" : "#000";
+    const onWater = S.map[key(u.x, u.y)] === TILE.OCEAN;
+    ctx.strokeStyle = onWater ? "#7fd4ff"
+      : (u.moves > 0 && u.owner === 0 ? "#ffe14d" : "#000");
     ctx.lineWidth = u.moves > 0 && u.owner === 0 ? 2 : 1;
     ctx.stroke();
     ctx.fillStyle = "#fff";
@@ -692,7 +845,7 @@ function renderPanel() {
   const el = document.getElementById("civ-panel");
   if (!el) return;
   const sel = S.sel ? unitById(S.sel) : null;
-  let body = `<div class="civ-hint">Кликните юнит, затем клетку. 🏛 — города, ⛰ — горы.</div>`;
+  let body = `<div class="civ-hint">Кликните юнит, затем клетку. Сухопутные юниты могут выходить в море. ПКМ — снять выбор.</div>`;
   if (sel) {
     const u = UNITS[sel.type];
     const t = TERRAIN[S.map[key(sel.x, sel.y)]];
@@ -769,8 +922,8 @@ function showCity(c) {
   const y = cityYields(c);
   const p = S.players[0];
   const unitOpts = Object.entries(UNITS)
-    .filter(([, d]) => !d.tech || p.techs.includes(d.tech))
-    .map(([id, d]) => ({ k: "unit", id, name: d.name, cost: d.cost, info: `⚔${d.atk} 🛡${d.def}` }));
+    .filter(([, d]) => (!d.tech || p.techs.includes(d.tech)) && (!d.naval || isCoastal(c.x, c.y)))
+    .map(([id, d]) => ({ k: "unit", id, name: d.name, cost: d.cost, info: `⚔${d.atk} 🛡${d.def}${d.naval ? " ⛵" : ""}` }));
   const bldOpts = Object.entries(BUILDINGS)
     .filter(([id, d]) => (!d.tech || p.techs.includes(d.tech)) && !c.buildings.includes(id))
     .map(([id, d]) => ({ k: "building", id, name: d.name, cost: d.cost, info: d.desc }));
@@ -785,6 +938,7 @@ function showCity(c) {
     <div class="civ-dialog civ-city">
       <h2>🏛 ${c.name} <span class="civ-pop">население ${c.pop}</span></h2>
       <div class="civ-yields">🌾 ${y.food} (еда) · 🔨 ${y.prod} (произв.) · 🔬 ${y.sci} (наука)</div>
+      ${y.trade ? `<div class="civ-yields">🤝 Морская торговля: +2🔨 +1🔬</div>` : ""}
       <div class="civ-growth">Рост: ${c.foodStored}/${10 + c.pop * 5} еды</div>
       ${cur ? `<div class="civ-growth">Производит: ${cur.name} (${c.prodStored}/${cur.cost})</div>` : `<div class="civ-warn">Не выбрано производство!</div>`}
       ${c.buildings.length ? `<div class="civ-yields">Постройки: ${c.buildings.map((b) => BUILDINGS[b].name).join(", ")}</div>` : ""}
@@ -889,6 +1043,9 @@ export function debugApi() {
     techAvailable,
     cityYields,
     reachable,
+    canEnter,
+    isNaval,
+    tradeActive,
   };
 }
 
