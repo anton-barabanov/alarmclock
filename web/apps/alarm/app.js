@@ -117,18 +117,25 @@ let alarms = store.load();
 let route = { name: "list" };
 let firedKeys = new Set();
 let snoozes = {};
+let rootEl = null;
+let ringingEl = null;
+let hubCtx = null;
+let tickTimer = null;
 
 function persist() { store.save(alarms); }
 
 function render() {
-  const app = document.getElementById("app");
-  if (route.name === "list") renderList(app);
-  else renderEdit(app, route.alarmId);
+  if (!rootEl) return;
+  if (route.name === "list") renderList();
+  else renderEdit(route.alarmId);
 }
 
-function renderList(app) {
-  app.innerHTML = `
-    <div class="topbar"><h1>Будильник</h1></div>
+function renderList() {
+  rootEl.innerHTML = `
+    <div class="topbar">
+      <button class="back" id="home-btn" title="К приложениям">⌂</button>
+      <h1>Будильник</h1>
+    </div>
     <div class="list">
       ${alarms.length === 0 ? `<div class="empty">Будильников пока нет.\nНажмите «Добавить»</div>` : ""}
       ${alarms.map((a) => `
@@ -150,14 +157,15 @@ function renderList(app) {
     route = { name: "edit", alarmId: null };
     render();
   };
-  app.querySelectorAll(".card").forEach((card) => {
+  document.getElementById("home-btn").onclick = () => hubCtx && hubCtx.back();
+  rootEl.querySelectorAll(".card").forEach((card) => {
     card.onclick = (e) => {
       if (e.target.closest(".switch")) return;
       route = { name: "edit", alarmId: Number(card.dataset.id) };
       render();
     };
   });
-  app.querySelectorAll(".switch input").forEach((sw) => {
+  rootEl.querySelectorAll(".switch input").forEach((sw) => {
     sw.onchange = () => {
       const id = Number(sw.closest(".switch").dataset.toggle);
       const a = alarms.find((x) => x.id === id);
@@ -169,13 +177,14 @@ function renderList(app) {
   });
 }
 
-function renderEdit(app, alarmId) {
+function renderEdit(alarmId) {
   const isNew = alarmId === null;
   const initial = isNew ? newAlarm() : alarms.find((a) => a.id === alarmId);
+  if (!initial) { route = { name: "list" }; render(); return; }
   const draft = { ...initial, ringtoneId: initial.ringtoneId || "" };
   const timeValue = `${pad2(draft.hour)}:${pad2(draft.minute)}`;
 
-  app.innerHTML = `
+  rootEl.innerHTML = `
     <div class="topbar">
       <button class="back" id="back-btn">←</button>
       <h1>${isNew ? "Новый будильник" : "Будильник"}</h1>
@@ -242,14 +251,6 @@ function renderEdit(app, alarmId) {
     };
   });
   document.getElementById("vibrate-input").onchange = (e) => { draft.vibrate = e.target.checked; };
-  document.querySelectorAll("#ringtone-chips .chip").forEach((chip) => {
-    chip.onclick = () => {
-      draft.ringtoneId = chip.dataset.ringtone;
-      document.querySelectorAll("#ringtone-chips .chip").forEach((c) => c.classList.remove("selected"));
-      chip.classList.add("selected");
-      previewMelody(chip.dataset.ringtone);
-    };
-  });
   const snoozeInput = document.getElementById("snooze-input");
   snoozeInput.oninput = () => {
     draft.snoozeMinutes = Number(snoozeInput.value);
@@ -260,6 +261,14 @@ function renderEdit(app, alarmId) {
       draft.mathDifficulty = chip.dataset.diff;
       document.getElementById("diff-chips").querySelectorAll(".chip").forEach((c) => c.classList.remove("selected"));
       chip.classList.add("selected");
+    };
+  });
+  document.querySelectorAll("#ringtone-chips .chip").forEach((chip) => {
+    chip.onclick = () => {
+      draft.ringtoneId = chip.dataset.ringtone;
+      document.querySelectorAll("#ringtone-chips .chip").forEach((c) => c.classList.remove("selected"));
+      chip.classList.add("selected");
+      previewMelody(chip.dataset.ringtone);
     };
   });
   document.getElementById("save-btn").onclick = () => {
@@ -288,13 +297,12 @@ function escapeAttr(s) { return escapeHtml(s).replace(/"/g, "&quot;"); }
 let audioCtx = null;
 let soundTimer = null;
 let vibrateTimer = null;
+let previewTimer = null;
 
 function unlockAudio() {
   if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   if (audioCtx.state === "suspended") audioCtx.resume();
 }
-
-document.addEventListener("pointerdown", unlockAudio, { once: true });
 
 function note(when, dur, freq, opts = {}) {
   const osc = audioCtx.createOscillator();
@@ -362,8 +370,6 @@ function startAlarmSound(ringtoneId) {
   soundTimer = setInterval(scheduleOnce, melody.ms);
 }
 
-let previewTimer = null;
-
 function previewMelody(id) {
   unlockAudio();
   const melody = MELODIES[id] || MELODIES.classic;
@@ -375,6 +381,7 @@ function previewMelody(id) {
 function stopAlarmSound() {
   if (soundTimer) { clearInterval(soundTimer); soundTimer = null; }
   if (vibrateTimer) { clearInterval(vibrateTimer); vibrateTimer = null; }
+  if (previewTimer) { clearTimeout(previewTimer); previewTimer = null; }
   if (navigator.vibrate) navigator.vibrate(0);
 }
 
@@ -395,8 +402,7 @@ function startRinging(alarm, isTest = false) {
     wrong: false,
     answer: "",
   };
-  const el = document.getElementById("ringing");
-  el.classList.remove("hidden");
+  ringingEl.classList.remove("hidden");
   drawRinging();
   startAlarmSound(alarm.ringtoneId);
   if (alarm.vibrate) startVibrate();
@@ -404,8 +410,7 @@ function startRinging(alarm, isTest = false) {
 
 function drawRinging() {
   const { alarm, problem, wrong } = ringing;
-  const el = document.getElementById("ringing");
-  el.innerHTML = `
+  ringingEl.innerHTML = `
     <div class="ring-card">
       <div class="ring-time">${formatTimeOfDay(alarm.hour, alarm.minute)}</div>
       ${alarm.label ? `<div class="ring-label">${escapeHtml(alarm.label)}</div>` : ""}
@@ -460,12 +465,12 @@ function drawRinging() {
 
 function stopRinging() {
   stopAlarmSound();
-  document.getElementById("ringing").classList.add("hidden");
-  document.getElementById("ringing").innerHTML = "";
+  ringingEl.classList.add("hidden");
+  ringingEl.innerHTML = "";
   ringing = null;
 }
 
-setInterval(() => {
+function tick() {
   if (ringing) return;
   const now = new Date();
   const hh = now.getHours(), mm = now.getMinutes();
@@ -488,8 +493,30 @@ setInterval(() => {
     }
   }
   if (firedKeys.size > 200) firedKeys = new Set([...firedKeys].slice(-100));
-}, 1000);
+}
 
-window.addEventListener("beforeunload", stopAlarmSound);
-
-render();
+export const alarmApp = {
+  id: "alarm",
+  title: "Будильник",
+  description: "Повторяющиеся будильники, мелодии, отложка и отключение математической задачей",
+  icon: "⏰",
+  mount(root, ctx) {
+    rootEl = root;
+    hubCtx = ctx;
+    ringingEl = document.createElement("div");
+    ringingEl.className = "ringing hidden";
+    document.body.appendChild(ringingEl);
+    route = { name: "list" };
+    render();
+    tickTimer = setInterval(tick, 1000);
+    return () => {
+      stopRinging();
+      stopAlarmSound();
+      if (tickTimer) { clearInterval(tickTimer); tickTimer = null; }
+      if (ringingEl && ringingEl.parentNode) ringingEl.parentNode.removeChild(ringingEl);
+      ringingEl = null;
+      rootEl = null;
+      hubCtx = null;
+    };
+  },
+};

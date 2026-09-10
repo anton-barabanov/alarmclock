@@ -263,3 +263,44 @@ body {
 .math-box input.wrong { border-color: var(--error); }
 .math-box .wrong-msg { color: var(--error); font-size: 14px; }
 .ring-card .btn { margin-top: 10px; }
+
+.hub {
+  max-width: 560px;
+  margin: 0 auto;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.hub-card {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  background: var(--surface-2);
+  border-radius: 16px;
+  padding: 18px;
+  cursor: pointer;
+  transition: transform 0.08s ease;
+}
+.hub-card:active { transform: scale(0.985); }
+.hub-icon { font-size: 38px; line-height: 1; }
+.hub-info { flex: 1; min-width: 0; }
+.hub-title { font-size: 18px; font-weight: 600; }
+.hub-desc {
+  font-size: 13.5px;
+  color: var(--on-surface-var);
+  margin-top: 3px;
+}
+.hub-arrow { color: var(--on-surface-var); font-size: 20px; }
+.hub-footer {
+  max-width: 560px;
+  margin: 10px auto 40px;
+  padding: 0 18px;
+  font-size: 12.5px;
+  color: var(--on-surface-var);
+}
+.hub-footer code {
+  background: var(--surface-2);
+  padding: 1px 6px;
+  border-radius: 6px;
+}
