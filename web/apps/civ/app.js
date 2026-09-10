@@ -71,28 +71,102 @@ function cityAt(x, y) { return S.cities.find((c) => c.x === x && c.y === y) || n
 function cityById(id) { return S.cities.find((c) => c.id === id) || null; }
 function unitById(id) { return S.units.find((u) => u.id === id) || null; }
 
-function generateMap() {
-  const map = new Array(W * H).fill(TILE.OCEAN);
-  for (let b = 0; b < 7; b++) {
-    let x = 3 + Math.floor(Math.random() * (W - 6));
-    let y = 3 + Math.floor(Math.random() * (H - 6));
-    for (let s = 0; s < 55; s++) {
-      if (inMap(x, y)) map[key(x, y)] = Math.random() < 0.45 ? TILE.GRASS : TILE.PLAINS;
-      x += Math.floor(Math.random() * 3) - 1;
-      y += Math.floor(Math.random() * 3) - 1;
-      x = Math.max(1, Math.min(W - 2, x));
-      y = Math.max(1, Math.min(H - 2, y));
-    }
-  }
+function makeNoise(gw, gh) {
+  const g = new Float32Array((gw + 1) * (gh + 1));
+  for (let i = 0; i < g.length; i++) g[i] = Math.random();
+  return (u, v) => {
+    const x = Math.min(gw - 0.001, Math.max(0, u));
+    const y = Math.min(gh - 0.001, Math.max(0, v));
+    const xi = Math.floor(x), yi = Math.floor(y);
+    const fx = x - xi, fy = y - yi;
+    const sx = fx * fx * (3 - 2 * fx), sy = fy * fy * (3 - 2 * fy);
+    const a = g[yi * (gw + 1) + xi], b = g[yi * (gw + 1) + xi + 1];
+    const c = g[(yi + 1) * (gw + 1) + xi], d = g[(yi + 1) * (gw + 1) + xi + 1];
+    return a + (b - a) * sx + (c - a) * sy + (a - b - c + d) * sx * sy;
+  };
+}
+
+const isWaterTile = (t) => t === TILE.OCEAN;
+const isLandTile = (t) => t !== TILE.OCEAN;
+
+function floodComponents(map, isClass) {
+  const seen = new Array(W * H).fill(false);
+  const comps = [];
   for (let i = 0; i < W * H; i++) {
-    if (map[i] === TILE.GRASS || map[i] === TILE.PLAINS) {
-      const r = Math.random();
-      if (r < 0.22) map[i] = TILE.FOREST;
-      else if (r < 0.36) map[i] = TILE.HILLS;
-      else if (r < 0.40) map[i] = TILE.MOUNTAIN;
+    if (seen[i] || !isClass(map[i])) continue;
+    const cells = [];
+    const stack = [i];
+    seen[i] = true;
+    let edge = false;
+    while (stack.length) {
+      const j = stack.pop();
+      cells.push(j);
+      const x = j % W, y = (j / W) | 0;
+      if (x === 0 || y === 0 || x === W - 1 || y === H - 1) edge = true;
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const nx = x + dx, ny = y + dy;
+        if (!inMap(nx, ny)) continue;
+        const k = key(nx, ny);
+        if (!seen[k] && isClass(map[k])) { seen[k] = true; stack.push(k); }
+      }
     }
+    comps.push({ cells, edge });
   }
-  return map;
+  return comps;
+}
+
+function cleanupBodies(map) {
+  for (const c of floodComponents(map, isWaterTile))
+    if (!c.edge && c.cells.length < 6)
+      c.cells.forEach((j) => { map[j] = TILE.GRASS; });
+  for (const c of floodComponents(map, isLandTile))
+    if (c.cells.length < 3)
+      c.cells.forEach((j) => { map[j] = TILE.OCEAN; });
+}
+
+function largestLandComponent(map) {
+  let best = [];
+  for (const c of floodComponents(map, isLandTile))
+    if (c.cells.length > best.length) best = c.cells;
+  return new Set(best);
+}
+
+function generateMap() {
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const coarse = makeNoise(6, 4);
+    const fine = makeNoise(13, 9);
+    const elev = new Float32Array(W * H);
+    for (let y = 0; y < H; y++)
+      for (let x = 0; x < W; x++) {
+        let e = coarse((x / W) * 5, (y / H) * 3) + 0.45 * fine((x / W) * 12, (y / H) * 8);
+        const d = Math.min(x, y, W - 1 - x, H - 1 - y);
+        if (d < 3) e -= (3 - d) * 0.28;
+        elev[key(x, y)] = e;
+      }
+    const sorted = Float32Array.from(elev).sort();
+    const thr = sorted[Math.floor(W * H * 0.52)];
+    const map = new Array(W * H);
+    for (let i = 0; i < W * H; i++) map[i] = elev[i] > thr ? TILE.GRASS : TILE.OCEAN;
+    cleanupBodies(map);
+    const comp = largestLandComponent(map);
+    if (comp.size < 90) continue;
+    for (let i = 0; i < W * H; i++)
+      if (map[i] !== TILE.OCEAN && !comp.has(i)) map[i] = TILE.OCEAN;
+    for (let i = 0; i < W * H; i++) {
+      if (map[i] !== TILE.GRASS) continue;
+      const r = Math.random();
+      if (r < 0.2) map[i] = TILE.PLAINS;
+    }
+    for (let i = 0; i < W * H; i++) {
+      if (map[i] !== TILE.GRASS && map[i] !== TILE.PLAINS) continue;
+      const r = Math.random();
+      if (r < 0.20) map[i] = TILE.FOREST;
+      else if (r < 0.33) map[i] = TILE.HILLS;
+      else if (r < 0.37) map[i] = TILE.MOUNTAIN;
+    }
+    return map;
+  }
+  return new Array(W * H).fill(TILE.GRASS);
 }
 
 function landScore(x, y) {
@@ -105,23 +179,18 @@ function landScore(x, y) {
 }
 
 function findStarts() {
-  let best = null;
-  for (let tries = 0; tries < 300; tries++) {
-    const a = [2 + Math.floor(Math.random() * (W - 4)), 2 + Math.floor(Math.random() * (H - 4))];
-    if (!TERRAIN[S.map[key(a[0], a[1])]].passable) continue;
-    let far = null;
-    for (let t = 0; t < 200; t++) {
-      const b = [2 + Math.floor(Math.random() * (W - 4)), 2 + Math.floor(Math.random() * (H - 4))];
-      if (!TERRAIN[S.map[key(b[0], b[1])]].passable) continue;
-      if (dist(a[0], a[1], b[0], b[1]) < 11) continue;
-      if (landScore(b[0], b[1]) < 8) continue;
-      far = b;
-      break;
+  const comp = largestLandComponent(S.map);
+  const spots = [...comp].filter((i) => landScore(i % W, (i / W) | 0) >= 8);
+  const pool = spots.length >= 2 ? spots : [...comp];
+  let bestPair = null, bestD = -1;
+  for (let i = 0; i < pool.length; i++)
+    for (let j = i + 1; j < pool.length; j++) {
+      const ax = pool[i] % W, ay = (pool[i] / W) | 0;
+      const bx = pool[j] % W, by = (pool[j] / W) | 0;
+      const d = dist(ax, ay, bx, by);
+      if (d > bestD) { bestD = d; bestPair = [[ax, ay], [bx, by]]; }
     }
-    if (far && landScore(a[0], a[1]) >= 8) { best = [a, far]; break; }
-  }
-  if (!best) best = [[3, 3], [W - 4, H - 4]];
-  return best;
+  return bestPair || [[3, 3], [W - 4, H - 4]];
 }
 
 function newGame() {
@@ -449,12 +518,15 @@ function stepToward(u, tx, ty) {
   u.y = ny;
 }
 
+function playerAlive(idx) {
+  return S.cities.some((c) => c.owner === idx) ||
+    S.units.some((u) => u.owner === idx && u.type === "settler");
+}
+
 function checkVictory() {
   if (S.over) return;
-  const p0 = S.cities.filter((c) => c.owner === 0).length;
-  const p1 = S.cities.filter((c) => c.owner === 1).length;
-  if (p1 === 0) S.over = { winner: 0 };
-  else if (p0 === 0) S.over = { winner: 1 };
+  if (!playerAlive(1)) S.over = { winner: 0 };
+  else if (!playerAlive(0)) S.over = { winner: 1 };
 }
 
 function endTurn() {
