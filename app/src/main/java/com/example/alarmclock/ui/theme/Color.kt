@@ -1,0 +1,31 @@
+package com.example.alarmclock.ui.theme
+
+import androidx.compose.ui.graphics.Color
+
+val PrimaryLight = Color(0xFF00695C)
+val OnPrimaryLight = Color(0xFFFFFFFF)
+val PrimaryContainerLight = Color(0xFF9CF2E1)
+val OnPrimaryContainerLight = Color(0xFF00201B)
+val SecondaryLight = Color(0xFF4A635D)
+val SecondaryContainerLight = Color(0xFFCCE8E0)
+val OnSecondaryContainerLight = Color(0xFF06201B)
+val BackgroundLight = Color(0xFFF4FBF8)
+val OnBackgroundLight = Color(0xFF161D1B)
+val SurfaceLight = Color(0xFFF4FBF8)
+val OnSurfaceLight = Color(0xFF161D1B)
+val SurfaceVariantLight = Color(0xFFDBE5E1)
+val OnSurfaceVariantLight = Color(0xFF3F4946)
+
+val PrimaryDark = Color(0xFF4DDAC2)
+val OnPrimaryDark = Color(0xFF003730)
+val PrimaryContainerDark = Color(0xFF005046)
+val OnPrimaryContainerDark = Color(0xFF70F8DE)
+val SecondaryDark = Color(0xFFB1CCC4)
+val SecondaryContainerDark = Color(0xFF324B45)
+val OnSecondaryContainerDark = Color(0xFFCCE8E0)
+val BackgroundDark = Color(0xFF0E1513)
+val OnBackgroundDark = Color(0xFFDDE4E1)
+val SurfaceDark = Color(0xFF0E1513)
+val OnSurfaceDark = Color(0xFFDDE4E1)
+val SurfaceVariantDark = Color(0xFF3F4946)
+val OnSurfaceVariantDark = Color(0xFFBFC9C5)
