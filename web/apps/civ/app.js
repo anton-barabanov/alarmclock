@@ -10,14 +10,20 @@ const TERRAIN = {
 };
 
 const UNITS = {
-  settler: { name: "Поселенец", letter: "П", atk: 0, def: 1, moves: 1, cost: 30, tech: null },
-  scout: { name: "Разведчик", letter: "Р", atk: 1, def: 1, moves: 2, cost: 15, tech: null },
-  warrior: { name: "Воин", letter: "В", atk: 2, def: 2, moves: 1, cost: 20, tech: null },
-  archer: { name: "Лучник", letter: "Л", atk: 3, def: 4, moves: 1, cost: 35, tech: "archery" },
-  swordsman: { name: "Мечник", letter: "М", atk: 5, def: 4, moves: 1, cost: 45, tech: "iron" },
-  galley: { name: "Галера", letter: "Г", atk: 3, def: 2, moves: 3, cost: 35, tech: "sailing", naval: true },
-  caravel: { name: "Каравелла", letter: "К", atk: 5, def: 3, moves: 4, cost: 55, tech: "astronomy", naval: true },
+  settler: { name: "Поселенец", letter: "П", icon: "🛖", atk: 0, def: 1, moves: 1, cost: 30, tech: null },
+  scout: { name: "Разведчик", letter: "Р", icon: "🧭", atk: 1, def: 1, moves: 2, cost: 15, tech: null },
+  warrior: { name: "Воин", letter: "В", icon: "⚔️", atk: 2, def: 2, moves: 1, cost: 20, tech: null },
+  archer: { name: "Лучник", letter: "Л", icon: "🏹", atk: 3, def: 4, moves: 1, cost: 35, tech: "archery" },
+  swordsman: { name: "Мечник", letter: "М", icon: "🗡️", atk: 5, def: 4, moves: 1, cost: 45, tech: "iron" },
+  galley: { name: "Галера", letter: "Г", icon: "⛵", atk: 3, def: 2, moves: 3, cost: 35, tech: "sailing", naval: true },
+  caravel: { name: "Каравелла", letter: "К", icon: "🚢", atk: 5, def: 3, moves: 4, cost: 55, tech: "astronomy", naval: true },
 };
+
+const DIFFICULTIES = [
+  { key: "easy", title: "Легко", prodMult: 0.75, sciMult: 0.75, aggroTurn: 30, aggroRange: 4, maxCities: 3, settlerChance: 0.6 },
+  { key: "normal", title: "Норма", prodMult: 1.0, sciMult: 1.0, aggroTurn: 15, aggroRange: 6, maxCities: 5, settlerChance: 0.7 },
+  { key: "hard", title: "Сложно", prodMult: 1.4, sciMult: 1.4, aggroTurn: 8, aggroRange: 8, maxCities: 7, settlerChance: 0.8 },
+];
 
 const BUILDINGS = {
   granary: { name: "Амбар", cost: 40, tech: "pottery", desc: "+2 еды в городе" },
@@ -295,10 +301,11 @@ function findStarts() {
   return [[a % W, (a / W) | 0], [b % W, (b / W) | 0]];
 }
 
-function newGame() {
+function newGame(diff = 1) {
   S = {
     turn: 1,
     nextId: 1,
+    difficulty: diff,
     map: null,
     res: null,
     waterComp: null,
@@ -514,6 +521,7 @@ function techAvailable(p, id) {
 }
 
 function processEconomy() {
+  const diff = DIFFICULTIES[S.difficulty] || DIFFICULTIES[1];
   for (const c of S.cities) {
     const p = S.players[c.owner];
     const y = cityYields(c);
@@ -525,7 +533,7 @@ function processEconomy() {
       c.foodStored -= need;
       if (c.owner === 0) addLog(`${c.name} вырос до ${c.pop} населения`);
     }
-    c.prodStored += y.prod;
+    c.prodStored += y.prod * (c.owner === 1 ? diff.prodMult : 1);
     if (c.producing) {
       const def = c.producing.k === "unit" ? UNITS[c.producing.id] : BUILDINGS[c.producing.id];
       if (c.prodStored >= def.cost) {
@@ -560,7 +568,7 @@ function processEconomy() {
       }
     }
     if (p.researching) {
-      p.progress += y.sci;
+      p.progress += y.sci * (c.owner === 1 ? diff.sciMult : 1);
       if (p.progress >= TECHS[p.researching].cost) {
         const done = p.researching;
         p.techs.push(done);
@@ -575,11 +583,12 @@ function processEconomy() {
 
 function aiTurn() {
   const p = S.players[1];
+  const diff = DIFFICULTIES[S.difficulty] || DIFFICULTIES[1];
   for (const c of S.cities.filter((x) => x.owner === 1)) {
     if (!c.producing) {
       const settlers = S.units.filter((u) => u.owner === 1 && u.type === "settler").length;
       const myCities = S.cities.filter((x) => x.owner === 1).length;
-      if (settlers === 0 && myCities < 5 && Math.random() < 0.7) {
+      if (settlers === 0 && myCities < diff.maxCities && Math.random() < diff.settlerChance) {
         c.producing = { k: "unit", id: "settler" };
       } else {
         const best = ["swordsman", "archer", "warrior"].find(
@@ -613,17 +622,17 @@ function aiTurn() {
     let bestD = 99;
     for (const e of S.units.filter((x) => x.owner === 0)) {
       const d = dist(u.x, u.y, e.x, e.y);
-      if (d < bestD && d <= 6) { bestD = d; target = [e.x, e.y]; }
+      if (d < bestD && d <= diff.aggroRange) { bestD = d; target = [e.x, e.y]; }
     }
     for (const c of S.cities.filter((x) => x.owner === 0)) {
       const d = dist(u.x, u.y, c.x, c.y);
-      if (d < bestD && d <= 6) { bestD = d; target = [c.x, c.y]; }
+      if (d < bestD && d <= diff.aggroRange) { bestD = d; target = [c.x, c.y]; }
     }
     if (!target) {
       const home = S.cities.filter((c) => c.owner === 1)[0];
       if (home && dist(u.x, u.y, home.x, home.y) > 3) target = [home.x, home.y];
     }
-    if (!target && S.turn > 15) {
+    if (!target && S.turn > diff.aggroTurn) {
       let bd = Infinity;
       for (const c of S.cities.filter((x) => x.owner === 0)) {
         const d = dist(u.x, u.y, c.x, c.y);
@@ -728,33 +737,47 @@ function drawMap() {
     }
   for (const c of S.cities) {
     if (!S.explored[key(c.x, c.y)]) continue;
+    const px = c.x * TS, py = c.y * TS;
+    ctx.fillStyle = "rgba(0,0,0,0.35)";
+    ctx.fillRect(px + 2, py + 2, TS - 5, TS - 5);
+    ctx.font = "19px sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("🏛️", px + TS / 2, py + TS / 2 + 6);
+    ctx.textAlign = "left";
     ctx.fillStyle = S.players[c.owner].color;
-    ctx.fillRect(c.x * TS + 3, c.y * TS + 3, TS - 8, TS - 8);
-    ctx.strokeStyle = "#fff";
-    ctx.strokeRect(c.x * TS + 3, c.y * TS + 3, TS - 8, TS - 8);
+    ctx.fillRect(px + 2, py + TS - 10, 14, 9);
     ctx.fillStyle = "#fff";
-    ctx.font = "bold 10px sans-serif";
-    ctx.fillText(String(c.pop), c.x * TS + TS - 11, c.y * TS + TS - 7);
+    ctx.font = "bold 8px sans-serif";
+    ctx.fillText(String(c.pop), px + 6, py + TS - 3);
+    if (c.buildings.includes("walls")) {
+      ctx.font = "10px sans-serif";
+      ctx.fillText("🛡", px + TS - 14, py + 11);
+    }
   }
   for (const u of S.units) {
     if (u.owner !== 0 && !visible[key(u.x, u.y)]) continue;
     if (!S.explored[key(u.x, u.y)]) continue;
     const cx = u.x * TS + TS / 2;
     const cy = u.y * TS + TS / 2;
+    const onWater = S.map[key(u.x, u.y)] === TILE.OCEAN;
     ctx.beginPath();
-    ctx.arc(cx, cy, 11, 0, Math.PI * 2);
+    ctx.arc(cx, cy, 12, 0, Math.PI * 2);
     ctx.fillStyle = S.players[u.owner].color;
     ctx.fill();
-    const onWater = S.map[key(u.x, u.y)] === TILE.OCEAN;
     ctx.strokeStyle = onWater ? "#7fd4ff"
-      : (u.moves > 0 && u.owner === 0 ? "#ffe14d" : "#000");
-    ctx.lineWidth = u.moves > 0 && u.owner === 0 ? 2 : 1;
+      : (u.moves > 0 && u.owner === 0 ? "#ffe14d" : "rgba(0,0,0,0.6)");
+    ctx.lineWidth = u.moves > 0 && u.owner === 0 ? 2 : 1.5;
     ctx.stroke();
-    ctx.fillStyle = "#fff";
-    ctx.font = "bold 12px sans-serif";
+    ctx.font = "15px sans-serif";
     ctx.textAlign = "center";
-    ctx.fillText(UNITS[u.type].letter, cx, cy + 4);
+    ctx.fillText(UNITS[u.type].icon, cx, cy + 5);
     ctx.textAlign = "left";
+    if (u.owner === 0 && u.moves > 0) {
+      ctx.beginPath();
+      ctx.arc(cx + 10, cy - 9, 3, 0, Math.PI * 2);
+      ctx.fillStyle = "#ffe14d";
+      ctx.fill();
+    }
   }
   if (reach) {
     for (const [k] of reach) {
@@ -828,7 +851,7 @@ function renderTopbar() {
   if (!el) return;
   el.innerHTML = `
     <button class="back" id="civ-home">⌂</button>
-    <h1>Цивилизация · ход ${S.turn}</h1>
+    <h1>Цивилизация · ход ${S.turn}<span class="civ-diff">${(DIFFICULTIES[S.difficulty] || DIFFICULTIES[1]).title}</span></h1>
     <div class="civ-sci">
       ${res ? `🔬 ${res.name} ${pct}%` : "🔬 выберите технологию"}
       <div class="civ-sci-bar"><div style="width:${pct}%"></div></div>
@@ -911,10 +934,13 @@ function renderOver() {
     <div class="civ-dialog">
       <h2>${win ? "🏆 Победа!" : "💀 Поражение"}</h2>
       <p>${win ? "Вы захватили все города противника." : "Противник уничтожил вашу цивилизацию."}</p>
-      <button class="btn primary" id="civ-restart">Новая игра</button>
+      <p>Играть снова:</p>
+      <div class="civ-diff-btns">${newGameButtons()}</div>
     </div>
   `;
-  document.getElementById("civ-restart").onclick = () => { newGame(); renderAll(); };
+  el.querySelectorAll(".civ-diff-btn").forEach((b) => {
+    b.onclick = () => { newGame(Number(b.dataset.diff)); renderAll(); };
+  });
 }
 
 function showCity(c) {
@@ -1009,21 +1035,33 @@ function closeModal() {
   if (m) m.remove();
 }
 
-function showStart() {
+function newGameButtons() {
+  return DIFFICULTIES.map((d, i) =>
+    `<button class="btn ${i === 1 ? "primary" : "text"} civ-diff-btn" data-diff="${i}">${d.title}</button>`).join("");
+}
+
+function showStart(showContinue) {
   const m = document.createElement("div");
   m.className = "civ-modal";
   m.id = "civ-start";
   m.innerHTML = `
     <div class="civ-dialog">
       <h2>🏛 Цивилизация</h2>
-      <p>Пошаговая 4X-стратегия: расширяйтесь, изучайте технологии, захватите все города галлов.</p>
-      <button class="btn primary" id="civ-continue">Продолжить игру</button>
-      <button class="btn text" id="civ-new">Новая игра</button>
+      <p>Пошаговая 4X-стратегия: расширяйтесь, изучайте технологии, захватите все города галлов.<br>Выберите сложность:</p>
+      ${showContinue ? `<button class="btn primary" id="civ-continue">Продолжить игру</button>` : ""}
+      <div class="civ-diff-btns">${newGameButtons()}</div>
     </div>
   `;
   rootEl.appendChild(m);
-  document.getElementById("civ-continue").onclick = () => { m.remove(); renderAll(); };
-  document.getElementById("civ-new").onclick = () => { m.remove(); newGame(); renderAll(); };
+  const cont = document.getElementById("civ-continue");
+  if (cont) cont.onclick = () => m.remove();
+  m.querySelectorAll(".civ-diff-btn").forEach((b) => {
+    b.onclick = () => {
+      newGame(Number(b.dataset.diff));
+      m.remove();
+      renderAll();
+    };
+  });
 }
 
 function escapeHtml(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
@@ -1075,7 +1113,7 @@ export const civApp = {
     if (!hadSave) newGame();
     computeVision();
     renderAll();
-    if (hadSave && !S.over) showStart();
+    showStart(hadSave && !S.over);
     return () => {
       closeModal();
       const ov = document.getElementById("civ-over");

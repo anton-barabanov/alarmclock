@@ -431,3 +431,15 @@ body {
 .civ-prod.done { opacity: 0.55; }
 .civ-prod:disabled { cursor: default; opacity: 0.4; }
 .civ-prod:not(:disabled):hover { border-color: var(--primary-dim); }
+
+.civ-diff {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--on-surface-var);
+  margin-left: 8px;
+}
+.civ-diff-btns {
+  display: flex;
+  gap: 8px;
+}
+.civ-diff-btns .btn { flex: 1; }
